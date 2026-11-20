@@ -6,12 +6,23 @@ from collections.abc import Iterable, Iterator
 from typing import Literal, cast
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel
 
 app = FastAPI()
+frontend_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip() for origin in frontend_origins.split(",") if origin.strip()
+    ],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+    allow_credentials=False,
+)
 
 
 class ChatMessage(BaseModel):

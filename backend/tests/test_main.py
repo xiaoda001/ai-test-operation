@@ -19,6 +19,22 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_chat_allows_local_frontend_cors_preflight() -> None:
+    """The local frontend can preflight a JSON POST to the chat endpoint."""
+    response = client.options(
+        "/chat",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_chat_streams_sse_tokens_and_done(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
