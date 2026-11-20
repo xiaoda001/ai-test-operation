@@ -6,7 +6,7 @@ import sys
 from openai import OpenAI
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
-MODEL = "deepseek-flash"
+DEFAULT_MODEL = "deepseek-flash"
 
 
 def main() -> None:
@@ -20,9 +20,11 @@ def main() -> None:
         raise SystemExit(1)
 
     base_url = os.getenv("DEEPSEEK_BASE_URL", DEFAULT_BASE_URL)
+    # 从环境配置读取模型名称，未设置时使用默认模型。
+    model = os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL)
     client = OpenAI(api_key=api_key, base_url=base_url)
     response = client.chat.completions.create(
-        model=MODEL,
+        model=model,
         messages=[{"role": "user", "content": "你好"}],
     )
     text = response.choices[0].message.content
