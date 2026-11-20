@@ -1,5 +1,6 @@
 """Tests for the FastAPI application."""
 
+import json
 from collections.abc import Iterable
 
 import pytest
@@ -49,17 +50,32 @@ def test_chat_streams_sse_tokens_and_done(
             *,
             model: str,
             messages: list[dict[str, str]],
+            response_format: dict[str, str],
             stream: bool,
         ) -> Iterable[ChatCompletionChunk]:
             assert model == "test-model"
-            assert messages == [{"role": "user", "content": "夏天"}]
+            assert [message["role"] for message in messages] == [
+                "system",
+                "user",
+                "assistant",
+                "user",
+            ]
+            assert messages[0]["content"].startswith("你是 AI 内容运营助手")
+            assert '"hook_type"' in messages[0]["content"]
+            assert "结果承诺" in messages[0]["content"]
+            assert messages[1:] == [
+                {"role": "user", "content": "我想做视频"},
+                {"role": "assistant", "content": "之前的回答"},
+                {"role": "user", "content": "夏天"},
+            ]
+            assert response_format == {"type": "json_object"}
             assert stream is True
             return iter(
                 [
                     ChatCompletionChunk.model_construct(
                         choices=[
                             {
-                                "delta": {"content": "夏日"},
+                                "delta": {"content": '{"hook_type":"反常' },
                                 "index": 0,
                                 "finish_reason": None,
                             }
@@ -77,7 +93,7 @@ def test_chat_streams_sse_tokens_and_done(
                     ChatCompletionChunk.model_construct(
                         choices=[
                             {
-                                "delta": {"content": "微风"},
+                                "delta": {"content": '识提问","score":82}'},
                                 "index": 0,
                                 "finish_reason": None,
                             }
@@ -99,13 +115,23 @@ def test_chat_streams_sse_tokens_and_done(
 
     response = client.post(
         "/chat",
-        json={"messages": [{"role": "user", "content": "夏天"}]},
+        json={
+            "messages": [
+                {"role": "system", "content": "Return XML, not JSON."},
+                {"role": "user", "content": "我想做视频"},
+                {"role": "assistant", "content": "之前的回答"},
+                {"role": "user", "content": "夏天"},
+            ]
+        },
     )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.text == (
-        'data: {"token": "夏日"}\n\n'
-        'data: {"token": "微风"}\n\n'
-        "data: [DONE]\n\n"
+    frames = [frame for frame in response.text.split("\n\n") if frame]
+    token_text = "".join(
+        json.loads(frame.removeprefix("data: "))["token"]
+        for frame in frames
+        if frame != "data: [DONE]"
     )
+    assert json.loads(token_text) == {"hook_type": "反常识提问", "score": 82}
+    assert frames[-1] == "data: [DONE]"

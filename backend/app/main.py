@@ -3,6 +3,7 @@
 import json
 import os
 from collections.abc import Iterable, Iterator
+from pathlib import Path
 from typing import Literal, cast
 
 from fastapi import FastAPI, HTTPException
@@ -13,6 +14,7 @@ from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
 from pydantic import BaseModel
 
 app = FastAPI()
+PROMPT_TEMPLATE_PATH = Path(__file__).parent / "prompts" / "hook_analysis.txt"
 frontend_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
@@ -75,12 +77,21 @@ def chat(request: ChatRequest) -> StreamingResponse:
         api_key=cast(str, config["DEEPSEEK_API_KEY"]),
         base_url=cast(str, config["DEEPSEEK_BASE_URL"]),
     )
+    system_prompt = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8").strip()
     chunks = client.chat.completions.create(
         model=cast(str, config["DEEPSEEK_MODEL"]),
         messages=cast(
             list[ChatCompletionMessageParam],
-            [message.model_dump() for message in request.messages],
+            [
+                {"role": "system", "content": system_prompt},
+                *[
+                    message.model_dump()
+                    for message in request.messages
+                    if message.role != "system"
+                ],
+            ],
         ),
+        response_format={"type": "json_object"},
         stream=True,
     )
     return StreamingResponse(stream_tokens(chunks), media_type="text/event-stream")
