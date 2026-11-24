@@ -14,8 +14,15 @@
 - 下一步：Day 3 复习 + 投递；Day 4 多轮对话
 - 待解决：（今天没搞定的问题，比如某个报错的根因）
 
+## Day 4 交接
+- 已完成：system prompt 模板外置（backend/app/prompts/hook_analysis.txt）+ 后端强制置顶插入 + 过滤客户端 system 防注入；response_format=json_object 约束 JSON 输出；前端 messages state 维护多轮历史；可观测性埋点（app/observability.py，track_llm_call + SQLite + /traces 列表与详情接口，流式用 stream_options include_usage 拿 usage）。
+- 关键决策：见 docs/decisions.md（D1 客户端维护历史的分阶段理由、D5 system 外置、D6 自研埋点）。
+- 下一步：Day 5 滑动窗口截断 + session_id 多会话隔离。
+- 待解决：Day 5 尚未开始。
+
 ## 当前进度
 - [x] Day 1：项目初始化 + 第一次 LLM 裸调
 - [x] Day 2：后端流式 SSE、前端对话界面、前后端联调
-- [x] Day 3：学习已完成
-- [ ] Day 4：多轮对话
+- [x] Day 3：复习 + 投递 + 面试卡片（docs/interview-cards.md）
+- [x] Day 4：Prompt 工程 + 多轮对话 + 可观测性埋点
+- [ ] Day 5：滑动窗口 + 会话隔离
