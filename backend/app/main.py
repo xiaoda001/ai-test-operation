@@ -22,7 +22,7 @@ from app.observability import (
 from app.session_store import Message, SessionStore
 
 app = FastAPI()
-PROMPT_TEMPLATE_PATH = Path(__file__).parent / "prompts" / "hook_analysis.txt"
+CHAT_PROMPT_TEMPLATE_PATH = Path(__file__).parent / "prompts" / "chat_general.txt"
 CHAT_HISTORY_MAX_TURNS = int(os.getenv("CHAT_HISTORY_MAX_TURNS", "5"))
 if CHAT_HISTORY_MAX_TURNS < 1:
     raise ValueError("CHAT_HISTORY_MAX_TURNS must be a positive integer")
@@ -166,7 +166,7 @@ def chat(request: ChatRequest) -> StreamingResponse:
     user_message: Message = {"role": "user", "content": request.message}
     history = session_store.get(request.session_id)
     conversation = truncate_history(history, user_message, CHAT_HISTORY_MAX_TURNS)
-    system_prompt = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8").strip()
+    system_prompt = CHAT_PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8").strip()
     messages = [
         {"role": "system", "content": system_prompt},
         *conversation,
@@ -176,7 +176,6 @@ def chat(request: ChatRequest) -> StreamingResponse:
         lambda: client.chat.completions.create(
             model=cast(str, config["DEEPSEEK_MODEL"]),
             messages=cast(list[ChatCompletionMessageParam], messages),
-            response_format={"type": "json_object"},
             stream=True,
             stream_options={"include_usage": True},
         ),

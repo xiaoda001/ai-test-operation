@@ -70,7 +70,6 @@ def test_chat_streams_sse_tokens_and_done(
             *,
             model: str,
             messages: list[dict[str, str]],
-            response_format: dict[str, str],
             stream: bool,
             stream_options: dict[str, bool],
         ) -> Iterable[ChatCompletionChunk]:
@@ -81,9 +80,9 @@ def test_chat_streams_sse_tokens_and_done(
                 "assistant",
                 "user",
             ]
-            assert messages[0]["content"].startswith("你是 AI 内容运营助手")
-            assert '"hook_type"' in messages[0]["content"]
-            assert "结果承诺" in messages[0]["content"]
+            assert messages[0]["content"].startswith("你是内容运营助手")
+            assert "正常用自然语言回答用户问题" in messages[0]["content"]
+            assert '"hook_type"' not in messages[0]["content"]
             assert messages[1:] == [
                 {"role": "user", "content": "我想做视频"},
                 {"role": "assistant", "content": "之前的回答"},
@@ -96,7 +95,6 @@ def test_chat_streams_sse_tokens_and_done(
                     ),
                 },
             ]
-            assert response_format == {"type": "json_object"}
             assert stream is True
             assert stream_options == {"include_usage": True}
             return iter(
@@ -104,7 +102,7 @@ def test_chat_streams_sse_tokens_and_done(
                     ChatCompletionChunk.model_construct(
                         choices=[
                             {
-                                "delta": {"content": '{"hook_type":"反常' },
+                                "delta": {"content": "你好，我是内容运营助手，"},
                                 "index": 0,
                                 "finish_reason": None,
                             }
@@ -122,7 +120,7 @@ def test_chat_streams_sse_tokens_and_done(
                     ChatCompletionChunk.model_construct(
                         choices=[
                             {
-                                "delta": {"content": '识提问","score":82}'},
+                                "delta": {"content": "可以帮你策划内容。"},
                                 "index": 0,
                                 "finish_reason": None,
                             }
@@ -165,7 +163,7 @@ def test_chat_streams_sse_tokens_and_done(
         for frame in frames
         if frame != "data: [DONE]"
     )
-    assert json.loads(token_text) == {"hook_type": "反常识提问", "score": 82}
+    assert token_text == "你好，我是内容运营助手，可以帮你策划内容。"
     assert frames[-1] == "data: [DONE]"
 
     traces = client.get("/traces")
@@ -195,7 +193,92 @@ def test_chat_streams_sse_tokens_and_done(
                 "sk_live_abcdefghijklmnop api_key=other-secret-value"
             ),
         },
-        {"role": "assistant", "content": '{"hook_type":"反常识提问","score":82}'},
+        {"role": "assistant", "content": "你好，我是内容运营助手，可以帮你策划内容。"},
+    ]
+
+
+def test_chat_keeps_context_across_three_turns(
+    monkeypatch: pytest.MonkeyPatch,
+    trace_db: None,
+) -> None:
+    """同一会话的连续请求会把已完成的问答带入后续上下文。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "test-model")
+    store = SessionStore()
+    monkeypatch.setattr(main, "session_store", store)
+    captured_messages: list[list[dict[str, str]]] = []
+    replies = ["记住了，你叫小明。", "你叫小明。", "你刚才说你叫小明。"]
+
+    class FakeCompletions:
+        def create(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, str]],
+            stream: bool,
+            stream_options: dict[str, bool],
+        ) -> Iterable[ChatCompletionChunk]:
+            assert model == "test-model"
+            assert stream is True
+            assert stream_options == {"include_usage": True}
+            captured_messages.append(messages)
+            reply = replies[len(captured_messages) - 1]
+            return iter(
+                [
+                    ChatCompletionChunk.model_construct(
+                        choices=[
+                            {
+                                "delta": {"content": reply},
+                                "index": 0,
+                                "finish_reason": None,
+                            }
+                        ]
+                    )
+                ]
+            )
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, *, api_key: str, base_url: str) -> None:
+            assert api_key == "test-key"
+            assert base_url == "https://example.invalid/v1"
+            self.chat = FakeChat()
+
+    monkeypatch.setattr("app.main.OpenAI", FakeOpenAI)
+
+    for message, expected_reply in zip(
+        ["我叫小明", "我叫什么", "我刚才说我叫什么"], replies, strict=True
+    ):
+        response = client.post(
+            "/chat", json={"session_id": "session-1", "message": message}
+        )
+        assert response.status_code == 200
+        frames = [frame for frame in response.text.split("\n\n") if frame]
+        tokens = [
+            json.loads(frame.removeprefix("data: "))["token"]
+            for frame in frames
+            if frame != "data: [DONE]"
+        ]
+        assert "".join(tokens) == expected_reply
+
+    third_request = captured_messages[2]
+    assert [message["role"] for message in third_request] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert third_request[-5:] == [
+        {"role": "user", "content": "我叫小明"},
+        {"role": "assistant", "content": "记住了，你叫小明。"},
+        {"role": "user", "content": "我叫什么"},
+        {"role": "assistant", "content": "你叫小明。"},
+        {"role": "user", "content": "我刚才说我叫什么"},
     ]
 
 
