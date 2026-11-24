@@ -19,6 +19,7 @@ dev = [
 [tool.mypy]
 strict = true
 python_version = "3.11"
+files = ["app", "tests", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

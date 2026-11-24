@@ -5,6 +5,8 @@
 
 # Python
 .venv/
+backend/data/*.sqlite3
+backend/.pytest-tmp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -20,6 +22,7 @@ htmlcov/
 # Node / Next.js
 node_modules/
 .next/
+*.tsbuildinfo
 out/
 coverage/
 npm-debug.log*
