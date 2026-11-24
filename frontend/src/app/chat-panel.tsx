@@ -44,6 +44,7 @@ function parseErrorMessage(body: string, status: number): string {
 
 export default function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,11 +54,21 @@ export default function ChatPanel() {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isGenerating]);
 
+  useEffect(() => {
+    const storageKey = "ai-content-agent-session-id";
+    const storedSessionId = window.localStorage.getItem(storageKey);
+    const nextSessionId = storedSessionId ?? crypto.randomUUID();
+    if (!storedSessionId) {
+      window.localStorage.setItem(storageKey, nextSessionId);
+    }
+    setSessionId(nextSessionId);
+  }, []);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = input.trim();
     const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-    if (!content || isGenerating) {
+    if (!content || isGenerating || !sessionId) {
       return;
     }
     if (!apiBaseUrl) {
@@ -86,10 +97,8 @@ export default function ChatPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: nextMessages.map(({ role, content: messageContent }) => ({
-            role,
-            content: messageContent,
-          })),
+          session_id: sessionId,
+          message: content,
         }),
       });
 

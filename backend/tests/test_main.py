@@ -8,10 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletionChunk
 
-from app import observability
-from app.main import app
+from app import main, observability
+from app.session_store import Message, SessionStore
 
-client = TestClient(app)
+client = TestClient(main.app)
 
 
 @pytest.fixture
@@ -56,6 +56,13 @@ def test_chat_streams_sse_tokens_and_done(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://example.invalid/v1")
     monkeypatch.setenv("DEEPSEEK_MODEL", "test-model")
+    store = SessionStore()
+    store.append(
+        "session-1",
+        {"role": "user", "content": "我想做视频"},
+        {"role": "assistant", "content": "之前的回答"},
+    )
+    monkeypatch.setattr(main, "session_store", store)
 
     class FakeCompletions:
         def create(
@@ -142,19 +149,11 @@ def test_chat_streams_sse_tokens_and_done(
     response = client.post(
         "/chat",
         json={
-            "messages": [
-                {"role": "system", "content": "Return XML, not JSON."},
-                {"role": "user", "content": "我想做视频"},
-                {"role": "assistant", "content": "之前的回答"},
-                {
-                    "role": "user",
-                    "content": (
-                        "夏天 test-key sk-testcredential123456 "
-                        "sk_live_abcdefghijklmnop "
-                        "api_key=other-secret-value"
-                    ),
-                },
-            ]
+            "session_id": "session-1",
+            "message": (
+                "夏天 test-key sk-testcredential123456 "
+                "sk_live_abcdefghijklmnop api_key=other-secret-value"
+            ),
         },
     )
 
@@ -188,6 +187,66 @@ def test_chat_streams_sse_tokens_and_done(
     assert "sk-testcredential123456" not in str(detail_body["messages"])
     assert "sk_live_abcdefghijklmnop" not in str(detail_body["messages"])
     assert "other-secret-value" not in str(detail_body["messages"])
+    assert store.get("session-1")[-2:] == [
+        {
+            "role": "user",
+            "content": (
+                "夏天 test-key sk-testcredential123456 "
+                "sk_live_abcdefghijklmnop api_key=other-secret-value"
+            ),
+        },
+        {"role": "assistant", "content": '{"hook_type":"反常识提问","score":82}'},
+    ]
+
+
+def test_truncate_history_keeps_recent_complete_turns() -> None:
+    """五轮窗口填满后，连续十轮请求的消息数保持不变。"""
+    store = SessionStore()
+    model_message_counts: list[int] = []
+    for index in range(1, 11):
+        user_message: Message = {"role": "user", "content": f"user {index}"}
+        history = store.get("session-1")
+        model_messages = main.truncate_history(
+            history, user_message, max_turns=5
+        )
+        # 再加上一条由后端置顶的 system 消息。
+        model_message_counts.append(1 + len(model_messages))
+        store.append(
+            "session-1",
+            user_message,
+            {"role": "assistant", "content": f"assistant {index}"},
+        )
+
+    assert model_message_counts == [2, 4, 6, 8, 10, 10, 10, 10, 10, 10]
+    assert main.truncate_history(
+        store.get("session-1"), {"role": "user", "content": "current"}, 5
+    ) == [
+        {"role": "user", "content": "user 7"},
+        {"role": "assistant", "content": "assistant 7"},
+        {"role": "user", "content": "user 8"},
+        {"role": "assistant", "content": "assistant 8"},
+        {"role": "user", "content": "user 9"},
+        {"role": "assistant", "content": "assistant 9"},
+        {"role": "user", "content": "user 10"},
+        {"role": "assistant", "content": "assistant 10"},
+        {"role": "user", "content": "current"},
+    ]
+
+
+def test_session_store_keeps_histories_isolated() -> None:
+    """向一个会话追加轮次不会影响其他会话。"""
+    store = SessionStore()
+    store.append(
+        "session-a",
+        {"role": "user", "content": "我叫小明"},
+        {"role": "assistant", "content": "你好，小明"},
+    )
+
+    assert store.get("session-b") == []
+    assert store.get("session-a") == [
+        {"role": "user", "content": "我叫小明"},
+        {"role": "assistant", "content": "你好，小明"},
+    ]
 
 
 def test_failed_llm_call_is_recorded(

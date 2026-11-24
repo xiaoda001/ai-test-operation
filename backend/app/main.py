@@ -19,9 +19,14 @@ from app.observability import (
     list_traces,
     track_llm_call,
 )
+from app.session_store import Message, SessionStore
 
 app = FastAPI()
 PROMPT_TEMPLATE_PATH = Path(__file__).parent / "prompts" / "hook_analysis.txt"
+CHAT_HISTORY_MAX_TURNS = int(os.getenv("CHAT_HISTORY_MAX_TURNS", "5"))
+if CHAT_HISTORY_MAX_TURNS < 1:
+    raise ValueError("CHAT_HISTORY_MAX_TURNS must be a positive integer")
+session_store = SessionStore()
 frontend_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:10111")
 app.add_middleware(
     CORSMiddleware,
@@ -44,7 +49,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """The request body for a streaming chat completion."""
 
-    messages: list[ChatMessage]
+    session_id: str
+    message: str
 
 
 class TraceListItem(BaseModel):
@@ -82,15 +88,36 @@ class TraceDetailResponse(BaseModel):
     error: str | None
 
 
-def stream_tokens(chunks: Iterable[ChatCompletionChunk]) -> Iterator[str]:
-    """Encode non-empty completion chunks as SSE token frames."""
+def truncate_history(
+    history: list[Message], user_message: Message, max_turns: int
+) -> list[Message]:
+    """保留窗口内完整的历史轮次和当前用户消息。"""
+    prior_turns = max_turns - 1
+    kept_history = history[-2 * prior_turns :] if prior_turns else []
+    return [*kept_history, user_message]
+
+
+def stream_tokens(
+    chunks: Iterable[ChatCompletionChunk],
+    *,
+    session_id: str,
+    user_message: Message,
+) -> Iterator[str]:
+    """编码流式消息帧，并在上游流正常结束后保存本轮对话。"""
+    assistant_content: list[str] = []
     for chunk in chunks:
         if not chunk.choices:
             continue
         content = chunk.choices[0].delta.content
         if content is not None:
+            assistant_content.append(content)
             token = json.dumps({"token": content}, ensure_ascii=False)
             yield f"data: {token}\n\n"
+    session_store.append(
+        session_id,
+        user_message,
+        {"role": "assistant", "content": "".join(assistant_content)},
+    )
     yield "data: [DONE]\n\n"
 
 
@@ -136,15 +163,15 @@ def chat(request: ChatRequest) -> StreamingResponse:
         api_key=cast(str, config["DEEPSEEK_API_KEY"]),
         base_url=cast(str, config["DEEPSEEK_BASE_URL"]),
     )
+    user_message: Message = {"role": "user", "content": request.message}
+    history = session_store.get(request.session_id)
+    conversation = truncate_history(history, user_message, CHAT_HISTORY_MAX_TURNS)
     system_prompt = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8").strip()
     messages = [
         {"role": "system", "content": system_prompt},
-        *[
-            message.model_dump()
-            for message in request.messages
-            if message.role != "system"
-        ],
+        *conversation,
     ]
+    print(f"Sending {len(messages)} messages to model")
     chunks = track_llm_call(
         lambda: client.chat.completions.create(
             model=cast(str, config["DEEPSEEK_MODEL"]),
@@ -158,4 +185,11 @@ def chat(request: ChatRequest) -> StreamingResponse:
         api_key=cast(str, config["DEEPSEEK_API_KEY"]),
         stream=True,
     )
-    return StreamingResponse(stream_tokens(chunks), media_type="text/event-stream")
+    return StreamingResponse(
+        stream_tokens(
+            chunks,
+            session_id=request.session_id,
+            user_message=user_message,
+        ),
+        media_type="text/event-stream",
+    )
