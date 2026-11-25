@@ -38,6 +38,6 @@
 ## Day 6 交接
 - 已完成：SessionStore 改为 Redis 存储 `summary` 和近期原文；默认保留 4 个已完成轮次，超出的最早轮次滚动压缩；摘要以 `[历史摘要]` user 消息进入上下文。
 - 关键决策：见 docs/decisions.md（D10）。摘要失败保留超量原文并继续对话；Redis 不可用时读取阶段返回 503。
-- 配置：`SESSION_BACKEND` 默认 `memory`，设为 `redis` 后使用 Redis 持久化；`REDIS_URL` 默认 `redis://127.0.0.1:6379/0`；`SESSION_TTL_SECONDS` 默认 86400 秒（24 小时）；`RECENT_TURNS` 默认 4。
+- 配置：`SESSION_BACKEND` 默认 `memory`，设为 `redis` 后使用 Redis 持久化；Redis 需为 6.2+，`REDIS_URL` 默认 `redis://127.0.0.1:6379/0`；`SESSION_TTL_SECONDS` 默认 86400 秒（24 小时）；`RECENT_TURNS` 默认 4。
 - 追踪：`/traces` 增加 `call_type`；旧 SQLite 表启动时自动增量迁移，聊天标记 `chat`，摘要标记 `summarize`。
 - 待解决：选择 `SESSION_BACKEND=redis` 时，本地和部署环境需提供 Redis 服务；摘要生成失败时历史原文会暂时超过窗口，之后的请求会重试压缩。

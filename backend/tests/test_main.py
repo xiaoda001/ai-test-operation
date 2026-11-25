@@ -35,6 +35,13 @@ class FakeRedis:
     def get(self, name: str) -> str | None:
         return self.values.get(name)
 
+    def getex(self, name: str, *, ex: int) -> str | None:
+        value = self.values.get(name)
+        if value is not None:
+            self.ttls[name] = ex
+            self.versions[name] = self.versions.get(name, 0) + 1
+        return value
+
     def setex(self, name: str, time: int, value: str) -> bool:
         self.values[name] = value
         self.ttls[name] = time
@@ -543,6 +550,29 @@ def test_redis_store_state_survives_store_recreation() -> None:
     assert redis.ttls["session:session-a"] == 3600
 
 
+def test_redis_get_state_does_not_return_a_key_expired_at_read_time() -> None:
+    """An expired key is returned as missing by the atomic get-and-renew call."""
+
+    class ExpiredRedis(FakeRedis):
+        def get(self, name: str) -> str | None:
+            return json.dumps(
+                {
+                    "summary": "stale summary",
+                    "history": [{"role": "user", "content": "stale turn"}],
+                }
+            )
+
+        def getex(self, name: str, *, ex: int) -> str | None:
+            return None
+
+    store = RedisSessionStore(ExpiredRedis(), ttl_seconds=60)
+
+    state = store.get_state("session-a")
+
+    assert state["summary"] == ""
+    assert state["history"] == []
+
+
 def test_session_store_persists_summary_history_and_refreshes_ttl() -> None:
     """Summary, raw turns, isolation, and sliding expiration persist together."""
     redis = FakeRedis()
@@ -948,7 +978,7 @@ def test_redis_read_failure_returns_503_before_streaming(
     from redis.exceptions import ConnectionError as RedisConnectionError
 
     class BrokenRedis(FakeRedis):
-        def get(self, name: str) -> str | None:
+        def getex(self, name: str, *, ex: int) -> str | None:
             raise RedisConnectionError("redis unavailable")
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")

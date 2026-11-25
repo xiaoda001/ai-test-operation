@@ -73,9 +73,9 @@ class RedisClient(Protocol):
 
     def get(self, name: str) -> str | None: ...
 
-    def setex(self, name: str, time: int, value: str) -> object: ...
+    def getex(self, name: str, *, ex: int) -> str | None: ...
 
-    def expire(self, name: str, time: int) -> object: ...
+    def setex(self, name: str, time: int, value: str) -> object: ...
 
     def pipeline(self) -> RedisPipeline: ...
 
@@ -219,10 +219,7 @@ class RedisSessionStore:
     def get_state(self, session_id: str) -> SessionState:
         """Load session state and refresh its sliding expiration."""
         key = self._key(session_id)
-        serialized = self._client.get(key)
-        if serialized is None:
-            return {"summary": "", "history": []}
-        self._client.expire(key, self._ttl_seconds)
+        serialized = self._client.getex(key, ex=self._ttl_seconds)
         return self._decode_state(serialized)
 
     @staticmethod
