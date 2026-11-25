@@ -37,6 +37,7 @@ class TraceSummary(TypedDict):
     trace_id: str
     created_at: str
     model: str
+    call_type: str
     prompt_tokens: int
     completion_tokens: int
     latency_ms: int
@@ -85,6 +86,7 @@ def _initialize_database() -> None:
                     trace_id TEXT NOT NULL UNIQUE,
                     created_at TEXT NOT NULL,
                     model TEXT NOT NULL,
+                    call_type TEXT NOT NULL DEFAULT 'llm',
                     messages TEXT NOT NULL,
                     prompt_tokens INTEGER NOT NULL DEFAULT 0,
                     completion_tokens INTEGER NOT NULL DEFAULT 0,
@@ -94,6 +96,15 @@ def _initialize_database() -> None:
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(llm_traces)")
+            }
+            if "call_type" not in columns:
+                connection.execute(
+                    "ALTER TABLE llm_traces ADD COLUMN call_type "
+                    "TEXT NOT NULL DEFAULT 'llm'"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_llm_traces_created_at "
                 "ON llm_traces (created_at DESC)"
@@ -105,6 +116,7 @@ def _persist_trace(
     trace_id: str,
     created_at: str,
     model: str,
+    call_type: str,
     messages: str,
     prompt_tokens: int,
     completion_tokens: int,
@@ -118,14 +130,15 @@ def _persist_trace(
             connection.execute(
                 """
                 INSERT INTO llm_traces (
-                    trace_id, created_at, model, messages, prompt_tokens,
+                    trace_id, created_at, model, call_type, messages, prompt_tokens,
                     completion_tokens, latency_ms, status, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trace_id,
                     created_at,
                     model,
+                    call_type,
                     messages,
                     prompt_tokens,
                     completion_tokens,
@@ -141,6 +154,7 @@ def _record_safely(
     trace_id: str,
     created_at: str,
     model: str,
+    call_type: str,
     messages: str,
     prompt_tokens: int,
     completion_tokens: int,
@@ -153,6 +167,7 @@ def _record_safely(
             trace_id=trace_id,
             created_at=created_at,
             model=model,
+            call_type=call_type,
             messages=messages,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -174,6 +189,7 @@ def _trace_stream(
     started_at: float,
     created_at: str,
     model: str,
+    call_type: str,
     messages: str,
     api_key: str | None,
 ) -> Generator[T, None, None]:
@@ -191,6 +207,7 @@ def _trace_stream(
             trace_id=trace_id,
             created_at=created_at,
             model=model,
+            call_type=call_type,
             messages=messages,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -204,6 +221,7 @@ def _trace_stream(
             trace_id=trace_id,
             created_at=created_at,
             model=model,
+            call_type=call_type,
             messages=messages,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -220,6 +238,7 @@ def track_llm_call(
     model: str,
     messages: Sequence[Mapping[str, object]],
     api_key: str | None = None,
+    call_type: str = "llm",
     stream: Literal[False] = False,
 ) -> T: ...
 
@@ -231,6 +250,7 @@ def track_llm_call(
     model: str,
     messages: Sequence[Mapping[str, object]],
     api_key: str | None = None,
+    call_type: str = "llm",
     stream: Literal[True],
 ) -> Generator[T, None, None]: ...
 
@@ -241,6 +261,7 @@ def track_llm_call(
     model: str,
     messages: Sequence[Mapping[str, object]],
     api_key: str | None = None,
+    call_type: str = "llm",
     stream: bool = False,
 ) -> object:
     """Run and record a normal or streaming LLM call without changing its output."""
@@ -255,6 +276,7 @@ def track_llm_call(
             trace_id=trace_id,
             created_at=created_at,
             model=model,
+            call_type=call_type,
             messages=safe_messages,
             prompt_tokens=0,
             completion_tokens=0,
@@ -271,6 +293,7 @@ def track_llm_call(
             started_at=started_at,
             created_at=created_at,
             model=model,
+            call_type=call_type,
             messages=safe_messages,
             api_key=api_key,
         )
@@ -280,6 +303,7 @@ def track_llm_call(
         trace_id=trace_id,
         created_at=created_at,
         model=model,
+        call_type=call_type,
         messages=safe_messages,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
@@ -296,6 +320,7 @@ def _summary_from_row(row: sqlite3.Row) -> TraceSummary:
         "trace_id": str(row["trace_id"]),
         "created_at": str(row["created_at"]),
         "model": str(row["model"]),
+        "call_type": str(row["call_type"]),
         "prompt_tokens": int(row["prompt_tokens"]),
         "completion_tokens": int(row["completion_tokens"]),
         "latency_ms": int(row["latency_ms"]),
@@ -311,7 +336,7 @@ def list_traces(limit: int = 100) -> list[TraceSummary]:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
-            SELECT id, trace_id, created_at, model, prompt_tokens,
+            SELECT id, trace_id, created_at, model, call_type, prompt_tokens,
                    completion_tokens, latency_ms, status, error
             FROM llm_traces
             ORDER BY created_at DESC, id DESC

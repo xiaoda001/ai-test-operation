@@ -56,6 +56,9 @@ npm run dev
 - `DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`：模型服务地址和模型名称。
 - `BACKEND_PORT`：后端端口，默认 `10110`。
 - `FRONTEND_ORIGINS`：允许访问后端的前端来源。
-- `CHAT_HISTORY_MAX_TURNS`：发送给模型的对话轮数上限，默认 `5`。
+- `RECENT_TURNS`：保留为原文的最近已完成轮数，默认 `4`；当前输入另计。
+- `SESSION_BACKEND`：会话存储后端，`memory` 或 `redis`，默认 `memory`。设为 `redis` 可在重启后保留会话。
+- `REDIS_URL`：会话 Redis 地址，默认 `redis://127.0.0.1:6379/0`；使用 Redis 后端前需启动 Redis。
+- `SESSION_TTL_SECONDS`：会话滑动过期时间，默认 `86400` 秒（24 小时）；每次读取或追加后续期。
 
-会话历史目前保存在后端进程内存中；重启后端会清空，多个后端进程之间不会共享。
+会话摘要和近期原文由所选后端一起保存；Redis 后端不可用时 `/chat` 返回 503。
